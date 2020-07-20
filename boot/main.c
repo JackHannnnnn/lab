@@ -41,7 +41,7 @@ bootmain(void)
 	struct Proghdr *ph, *eph;
 
 	// read 1st page off disk
-	readseg((uint32_t) ELFHDR, SECTSIZE*8, 0);
+	readseg((uint32_t) ELFHDR, SECTSIZE*8, 0); // read away first sector as it is already loaded into the memory
 
 	// is this a valid ELF?
 	if (ELFHDR->e_magic != ELF_MAGIC)
@@ -66,7 +66,7 @@ bad:
 		/* do nothing */;
 }
 
-// Read 'count' bytes at 'offset' from kernel into physical address 'pa'.
+// Read 'count' bits at 'offset' from kernel into physical address 'pa'.
 // Might copy more than asked
 void
 readseg(uint32_t pa, uint32_t count, uint32_t offset)
