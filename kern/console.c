@@ -153,7 +153,7 @@ cga_init(void)
 	outb(addr_6845, 15);
 	pos |= inb(addr_6845 + 1);
 
-	crt_buf = (uint16_t*) cp; // assume that each char takes 16 bits
+	crt_buf = (uint16_t*) cp; // assume that each pos takes 16 bits
 	crt_pos = pos;
 }
 
