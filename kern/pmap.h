@@ -65,6 +65,10 @@ void	tlb_invalidate(pde_t *pgdir, void *va);
 static inline physaddr_t
 page2pa(struct PageInfo *pp)
 {
+	// (pp - pages) gives the ith page, then multiplies it by page size / 4096 
+	// gives the real physical address
+	// page index range is [0, npages - 1]
+	// e.g. pages - pages = 0
 	return (pp - pages) << PGSHIFT;
 }
 
