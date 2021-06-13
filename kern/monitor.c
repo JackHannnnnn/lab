@@ -55,10 +55,26 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 	return 0;
 }
 
+#define GET_EBP(ebp_addr) ((uint32_t)(ebp_addr))
+#define GET_EIP(ebp_addr) ((uint32_t)*(ebp_addr+1))
+#define GET_ARG(ebp_addr, i) ((uint32_t)*(ebp_addr+2+i))
+
 int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
 	// Your code here.
+	char format[] = "  ebp %08x eip %08x args %08x %08x %08x %08x %08x\n";
+	char debug_info_format[] = "       %s:%d: %.*s+%d\n";
+	uint32_t *ebp_addr = (uint32_t *)read_ebp();
+	struct Eipdebuginfo eip_info;
+	
+	cprintf("Stack backtrace:\n");
+	while (ebp_addr) {  // line 74 in entry.S: 0x0 is start ebp
+		debuginfo_eip(GET_EIP(ebp_addr), &eip_info);
+		cprintf(format, GET_EBP(ebp_addr), GET_EIP(ebp_addr), GET_ARG(ebp_addr, 0), GET_ARG(ebp_addr, 1), GET_ARG(ebp_addr, 2), GET_ARG(ebp_addr, 3), GET_ARG(ebp_addr, 4));
+		cprintf(debug_info_format, eip_info.eip_file, eip_info.eip_line, eip_info.eip_fn_namelen, eip_info.eip_fn_name, GET_EIP(ebp_addr) - eip_info.eip_fn_addr);
+		ebp_addr = (uint32_t *)*ebp_addr;
+	}
 	return 0;
 }
 

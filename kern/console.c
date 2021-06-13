@@ -138,10 +138,10 @@ cga_init(void)
 
 	cp = (uint16_t*) (KERNBASE + CGA_BUF);
 	was = *cp;
-	*cp = (uint16_t) 0xA55A;
+	*cp = (uint16_t) 0xA55A; // type conversion will change the value
 	if (*cp != 0xA55A) {
 		cp = (uint16_t*) (KERNBASE + MONO_BUF);
-		addr_6845 = MONO_BASE;
+		addr_6845 = MONO_BASE; // mono display
 	} else {
 		*cp = was;
 		addr_6845 = CGA_BASE;
@@ -153,7 +153,7 @@ cga_init(void)
 	outb(addr_6845, 15);
 	pos |= inb(addr_6845 + 1);
 
-	crt_buf = (uint16_t*) cp;
+	crt_buf = (uint16_t*) cp; // assume that each pos takes 16 bits
 	crt_pos = pos;
 }
 
@@ -163,8 +163,9 @@ static void
 cga_putc(int c)
 {
 	// if no attribute given, then use black on white
+	// attribute are defined in first 8 bits of input char c
 	if (!(c & ~0xFF))
-		c |= 0x0700;
+		c |= 0x0700; // 07 means black on white
 
 	switch (c & 0xff) {
 	case '\b':
@@ -195,8 +196,8 @@ cga_putc(int c)
 	if (crt_pos >= CRT_SIZE) {
 		int i;
 
-		memmove(crt_buf, crt_buf + CRT_COLS, (CRT_SIZE - CRT_COLS) * sizeof(uint16_t));
-		for (i = CRT_SIZE - CRT_COLS; i < CRT_SIZE; i++)
+		memmove(crt_buf, crt_buf + CRT_COLS, (CRT_SIZE - CRT_COLS) * sizeof(uint16_t)); // shift whole screen one line upward
+		for (i = CRT_SIZE - CRT_COLS; i < CRT_SIZE; i++) // fill out the new last line
 			crt_buf[i] = 0x0700 | ' ';
 		crt_pos -= CRT_COLS;
 	}
