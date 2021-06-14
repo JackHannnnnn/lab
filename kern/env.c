@@ -116,7 +116,18 @@ env_init(void)
 {
 	// Set up envs array
 	// LAB 3: Your code here.
-
+	uint32_t i = NENV;
+	struct Env *env;
+	env_free_list = NULL;
+	while (1) { // Dont use for (i=NENV-1; i>=0; i--) as negative number is bigger than 0
+		i--;
+		env = &envs[i];
+		env->env_id = 0;
+		env->env_status = ENV_FREE;
+		env->env_link = env_free_list;
+		env_free_list = env;
+		if (i == 0) break;
+	}
 	// Per-CPU part of the initialization
 	env_init_percpu();
 }
@@ -142,6 +153,24 @@ env_init_percpu(void)
 	lldt(0);
 }
 
+// Note: pa2page(pa) will throw invalid pa error for mapping [KERNBASE, ~KERNBASE+1]
+// static int
+// mappages(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
+// {
+// 	pte_t *pte;
+// 	for (; size > 0; size -= PGSIZE) {
+// 		pte = pgdir_walk(pgdir, (void*)va, 1);
+// 		if (pte == NULL) return -1;
+// 		if (*pte & PTE_P) {
+// 			panic("this page corresponding to %d is already used", va);
+// 		}
+// 		*pte = PTE_ADDR(pa) | perm | PTE_P;
+// 		pa2page(pa)->pp_ref++;
+// 		va += PGSIZE;
+// 		pa += PGSIZE;
+// 	}
+// 	return 0;
+// }
 //
 // Initialize the kernel virtual memory layout for environment e.
 // Allocate a page directory, set e->env_pgdir accordingly,
@@ -179,7 +208,29 @@ env_setup_vm(struct Env *e)
 	//    - The functions in kern/pmap.h are handy.
 
 	// LAB 3: Your code here.
-
+	p->pp_ref++;
+	e->env_pgdir = page2kva(p);
+	memcpy(e->env_pgdir, kern_pgdir, PGSIZE); // Note: all processes share same kernel mapping
+	// struct kmap {
+	// 	uintptr_t va;
+	// 	size_t size;
+	// 	physaddr_t pa;
+	// 	int perm;
+	// } kmap[] = {
+	// 	{ UPAGES, ROUNDUP(sizeof(struct PageInfo) * npages, PGSIZE), PADDR(pages), PTE_U | PTE_P}, 
+	// 	{ UENVS, ROUNDUP(sizeof(struct Env) * NENV, PGSIZE), PADDR(envs), PTE_U | PTE_P},   
+	// 	{ KSTACKTOP-KSTKSIZE, KSTKSIZE, PADDR(bootstack), PTE_W},
+	// 	{ KERNBASE, ~KERNBASE+1, 0, PTE_W},
+	// };
+	// struct kmap *k;
+	// for(k = kmap; k < &kmap[ARRAY_SIZE(kmap)]; k++) {
+	// 	cprintf("kmap: %d, %d, %d, %d\n", k->va, k->size, k->pa, k->perm);
+	// 	if (mappages(e->env_pgdir, k->va, k->size, k->pa, k->perm) < 0) {
+	// 		env_free(e);
+	// 		return -E_NO_MEM;
+	// 	}
+	// }
+	// cprintf("kmap finished\n");
 	// UVPT maps the env's own page table read-only.
 	// Permissions: kernel R, user R
 	e->env_pgdir[PDX(UVPT)] = PADDR(e->env_pgdir) | PTE_P | PTE_U;
@@ -210,10 +261,10 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 		return r;
 
 	// Generate an env_id for this environment.
-	generation = (e->env_id + (1 << ENVGENSHIFT)) & ~(NENV - 1);
+	generation = (e->env_id + (1 << ENVGENSHIFT)) & ~(NENV - 1); // the generation'th time this env is allocated
 	if (generation <= 0)	// Don't create a negative env_id.
 		generation = 1 << ENVGENSHIFT;
-	e->env_id = generation | (e - envs);
+	e->env_id = generation | (e - envs); // last 10 bits never change and the middle 19 bits increase 1 by 1 until becomes negative
 
 	// Set the basic status variables.
 	e->env_parent_id = parent_id;
@@ -267,6 +318,20 @@ region_alloc(struct Env *e, void *va, size_t len)
 	//   'va' and 'len' values that are not page-aligned.
 	//   You should round va down, and round (va + len) up.
 	//   (Watch out for corner-cases!)
+	struct PageInfo *page;
+	uint32_t s = ROUNDDOWN((intptr_t)va, PGSIZE);
+	uint32_t last = ROUNDUP((intptr_t)va + len, PGSIZE);
+	for (; s < last; s += PGSIZE) {
+		page = page_alloc(0);
+		if (page == NULL) {
+			panic("region_alloc out of memory\n");
+			// Note: should clean page if not panic
+		}
+		if (page_insert(e->env_pgdir, page, (void *)s, PTE_U | PTE_W) < 0) {
+			panic("region_alloc out of memory(2)\n");
+			// Note: should clean page and pgdir if not panic
+		}
+	}
 }
 
 //
@@ -323,11 +388,33 @@ load_icode(struct Env *e, uint8_t *binary)
 	//  What?  (See env_run() and env_pop_tf() below.)
 
 	// LAB 3: Your code here.
+	struct Elf * elfhdr;
+	struct Proghdr *ph, *eph;
+	elfhdr = (struct Elf *)binary;
+	if (elfhdr->e_magic != ELF_MAGIC) {
+		panic("ELF format error");
+	}
 
+	lcr3(PADDR(e->env_pgdir)); // Note: switch pgdir first to automatically handle not page-aligned corner case
+	ph = (struct Proghdr *) ((uint8_t *) elfhdr + elfhdr->e_phoff);
+	eph = ph + elfhdr->e_phnum;
+	for (; ph < eph; ph++) {
+		if (ph->p_type != ELF_PROG_LOAD) continue;
+		if (ph->p_filesz > ph->p_memsz) {
+			panic("ph->p_filesz > ph->p_memsz\n");
+		}
+
+		region_alloc(e, (void *)ph->p_va, ph->p_memsz);
+		memset((void *)ph->p_va, 0,  ph->p_memsz);
+		memcpy((void *)ph->p_va, binary + ph->p_offset, ph->p_filesz);
+	}
+	e->env_tf.tf_eip = elfhdr->e_entry;
 	// Now map one page for the program's initial stack
 	// at virtual address USTACKTOP - PGSIZE.
 
 	// LAB 3: Your code here.
+	region_alloc(e, (void *)(USTACKTOP - PGSIZE), PGSIZE);
+	lcr3(PADDR(kern_pgdir));
 }
 
 //
@@ -341,6 +428,13 @@ void
 env_create(uint8_t *binary, enum EnvType type)
 {
 	// LAB 3: Your code here.
+	struct Env *env;
+	int32_t r;
+	if ((r = env_alloc(&env, 0)) < 0) {
+		panic("failed to alloc an env.\n");
+	}
+	load_icode(env, binary);
+	env->env_type = type;
 }
 
 //
@@ -374,7 +468,9 @@ env_free(struct Env *e)
 		pa = PTE_ADDR(e->env_pgdir[pdeno]);
 		pt = (pte_t*) KADDR(pa);
 
-		// unmap all PTEs in this page table
+		// Note: JOS doesn't allocate new pages for kernel part in each user process's kernel pgdir
+		// // unmap all PTEs mapped by user part in this page table
+		// if (pdeno < PDX(UTOP)) {
 		for (pteno = 0; pteno <= PTX(~0); pteno++) {
 			if (pt[pteno] & PTE_P)
 				page_remove(e->env_pgdir, PGADDR(pdeno, pteno, 0));
@@ -457,7 +553,16 @@ env_run(struct Env *e)
 	//	e->env_tf to sensible values.
 
 	// LAB 3: Your code here.
+	if (e != curenv) {
+		if (curenv->env_status == ENV_RUNNING) {
+			curenv->env_status = ENV_RUNNABLE;
+		}
+		curenv = e;
+		curenv->env_status = ENV_RUNNING;
+		curenv->env_runs++;
+		lcr3(PADDR(curenv->env_pgdir));
+	}
 
-	panic("env_run not yet implemented");
+	env_pop_tf(&curenv->env_tf);
 }
 

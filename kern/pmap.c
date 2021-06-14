@@ -158,14 +158,16 @@ mem_init(void)
 	// array.  'npages' is the number of physical pages in memory.  Use memset
 	// to initialize all fields of each struct PageInfo to 0.
 	// Your code goes here:
-	uint32_t size = sizeof(struct PageInfo) * npages;
-	pages = (struct PageInfo *) boot_alloc(size);
-	memset(pages, 0, ROUNDUP(size, PGSIZE));
+	uint32_t pages_size = sizeof(struct PageInfo) * npages;
+	pages = (struct PageInfo *) boot_alloc(pages_size);
+	memset(pages, 0, ROUNDUP(pages_size, PGSIZE));
 
 	//////////////////////////////////////////////////////////////////////
 	// Make 'envs' point to an array of size 'NENV' of 'struct Env'.
 	// LAB 3: Your code here.
-
+	uint32_t envs_size = sizeof(struct Env) * NENV;
+	envs = (struct Env *) boot_alloc(envs_size);
+	memset(envs, 0, ROUNDUP(envs_size, PGSIZE));
 	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
 	// up the list of free physical pages. Once we've done so, all further
@@ -188,8 +190,8 @@ mem_init(void)
 	//      (ie. perm = PTE_U | PTE_P)
 	//    - pages itself -- kernel RW, user NONE
 	// Your code goes here:
-	boot_map_region(kern_pgdir, UPAGES, ROUNDUP(size, PGSIZE), PADDR(pages), PTE_U | PTE_P);
-
+	boot_map_region(kern_pgdir, UPAGES, ROUNDUP(pages_size, PGSIZE), PADDR(pages), PTE_U | PTE_P);
+	
 	//////////////////////////////////////////////////////////////////////
 	// Map the 'envs' array read-only by the user at linear address UENVS
 	// (ie. perm = PTE_U | PTE_P).
@@ -197,7 +199,7 @@ mem_init(void)
 	//    - the new image at UENVS  -- kernel R, user R
 	//    - envs itself -- kernel RW, user NONE
 	// LAB 3: Your code here.
-
+	boot_map_region(kern_pgdir, UENVS, ROUNDUP(envs_size, PGSIZE), PADDR(envs), PTE_U | PTE_P);
 	//////////////////////////////////////////////////////////////////////
 	// Use the physical memory that 'bootstack' refers to as the kernel
 	// stack.  The kernel stack grows down from virtual address KSTACKTOP.
@@ -375,7 +377,7 @@ pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
 {
 	// Fill this function in
-	pde_t *pde = &kern_pgdir[PDX(va)];
+	pde_t *pde = &pgdir[PDX(va)];
 	pte_t *pte_table;
 	if (*pde & PTE_P) {
 		pte_table = (pte_t *)KADDR(PTE_ADDR(*pde));
